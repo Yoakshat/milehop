@@ -129,28 +129,35 @@ params matched the selected outbound+return combo exactly.
   that row, so it's only used for the outbound leg and for the final
   booked return leg.
 - `previewCheapestFareInRow(row)` reads a row's cheapest price **without
-  clicking anything** — needed for the top-3 return rows, since committing
-  to one before reading the other two would lose them. Falls back to
-  parsing the collapsed trigger's own preview price when unexpanded
-  (verified live to already equal the real cheapest tier's price).
-- `alaska-session.ts` opens 5 tabs (staggered 250ms), each claims one
+  clicking anything** — needed for the return rows, since committing to
+  one before reading the others would lose them. Falls back to parsing
+  the collapsed trigger's own preview price when unexpanded (verified
+  live to already equal the real cheapest tier's price).
+- `alaska-session.ts` opens up to 5 outbound tabs, each claims one
   outbound row by index, commits to its cheapest fare (morphs that same
   tab into return results — Alaska doesn't navigate to a new URL for
-  this), and streams previews of its top-3 return rows as `FlightCard`s.
+  this), and streams previews of **every** return row as `FlightCard`s
+  (free once the return page has loaded — just text/regex, no clicks).
   Alaska recomputes each return row's fare to already be the full
   round-trip total once an outbound leg is locked in (verified live), so
   no outbound+return math is needed. Tabs stay open, nothing further
   clicked, so `/book` can resume the exact right tab and commit to the
   specific return row the user picked.
+  - **Tab loading is sequential, tab processing is concurrent.** A tab's
+    *initial* load (goto + cookie-dismiss + wait for fares) is the
+    expensive part — 5 tabs hitting it near-simultaneously (only 250ms
+    apart) caused 2 of 5 to fail with a `page.goto` timeout on one real
+    run. Fix: each tab's initial load is awaited fully before the next
+    tab's load even starts; only the cheaper post-load work (commit to a
+    row, wait for the return page, read every row) runs concurrently
+    across tabs once loaded. Verified live: all 5 tabs then succeeded
+    (vs. 2 failures before), ~40s total for 5 outbound options x up to
+    10 return rows each (up to 50 cards/search).
 
-Known gaps from the real run, not yet fixed (see `docs/alaska-flow.md`'s
-2026-07-19 update for full detail):
-- 5 simultaneous tabs sometimes hit rate-limiting — one run saw 2 of 5
-  tabs fail with a `page.goto` timeout. The 250ms stagger isn't always
-  enough; a longer stagger or retry would be the next thing to try.
-- Connecting ("Multiple flights") itineraries sometimes have no visible
-  single flight-number code in the row text (only behind "Details") —
-  `flightNumber` falls back to `"Unknown"` for those, a real limitation.
+Known gap from the real run, not yet fixed: connecting ("Multiple
+flights") itineraries sometimes have no visible single flight-number code
+in the row text (only behind "Details") — `flightNumber` falls back to
+`"Unknown"` for those, a real limitation.
 
 ## Browser automation foundation
 

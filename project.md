@@ -90,12 +90,14 @@ timer).
 ## Deferred (explicitly, not forgotten)
 - Real Alaska scraper (`backend/src/browser/alaska-scraper.ts` +
   `alaska-session.ts`, `MILEHOP_REAL_ALASKA=1`) is **run and verified**
-  against the live site — real search results, real Add to Cart confirmed
-  via the resulting cart tab's fare-matrix params. Known gaps (see
-  `docs/alaska-flow.md`'s 2026-07-19 update): 5 simultaneous tabs
-  sometimes hit rate-limiting (2 of 5 failed in one run; the 250ms stagger
-  isn't always enough); connecting itineraries sometimes report
-  `flightNumber: "Unknown"` (no single flight code visible without
+  against the live site — real search results (up to 50 cards: 5 outbound
+  x every return row, not just top 3), real Add to Cart confirmed via the
+  resulting cart tab's fare-matrix params. Tab loading is sequential (the
+  expensive part) while each tab's post-load work runs concurrently — this
+  fixed an earlier rate-limiting issue (2 of 5 tabs failing) and all 5
+  succeeded on the next run, ~40s total. Remaining known gap: connecting
+  itineraries sometimes report `flightNumber: "Unknown"` (no single flight
+  code visible without
   clicking "Details").
 - Real login-gated checkout past "Add to cart" (explicitly out of scope for
   this demo)

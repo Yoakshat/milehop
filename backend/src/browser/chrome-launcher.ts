@@ -1,31 +1,26 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 // Ported from ~/projects/voyage/main/src/main/browser/chrome-launcher.ts,
-// adapted for a plain Node/Express server (no Electron main process) and —
-// crucially — for connecting to the user's REAL Chrome profile rather than
-// a copied/dedicated debug profile.
+// adapted for a plain Node/Express server (no Electron main process).
 //
-// IMPORTANT: Chrome only accepts --remote-debugging-port on a *fresh* launch
-// (i.e. no Chrome process already running against this profile). If the
-// user's normal Chrome is already open, this will fail to get a CDP-enabled
-// instance — quit Chrome completely (Cmd+Q, not just closing windows) before
-// calling launchChrome()/connectToRealChrome().
+// Takes `profileDir` as a parameter (from chrome-profile.ts's
+// ensureChromeProfile()) rather than owning it — matches voyage's split:
+// this file only knows how to launch/reuse a CDP-enabled Chrome process
+// against whatever profile directory it's handed; chrome-profile.ts owns
+// what that directory actually contains (a one-time copy of the user's
+// real Chrome profile, so cookies/logins carry over).
+//
+// This copy step is required, not optional: Chrome 136+ blocks
+// --remote-debugging-port from attaching to the DEFAULT profile directory
+// specifically to prevent malware from exfiltrating cookies/sessions via
+// CDP. A separate (copied) profile directory sidesteps that restriction
+// entirely, same as voyage does.
 
 const CHROME_BINARY = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const CDP_PORT = 9333;
 
 let chromeProcess: ChildProcess | null = null;
-
-/** The user's actual Chrome profile directory — NOT a copy. Reusing this
- * directly (rather than voyage's copy-the-profile approach) is what lets
- * this app see the user's real cookies/logins with zero setup, at the cost
- * of requiring Chrome to be fully quit first (see module comment above). */
-export function realChromeUserDataDir(): string {
-  return path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
-}
 
 async function isPortResponding(port: number): Promise<boolean> {
   try {
@@ -42,22 +37,21 @@ async function waitForPort(port: number, timeoutMs: number): Promise<void> {
     if (await isPortResponding(port)) return;
     await new Promise((r) => setTimeout(r, 200));
   }
-  throw new Error(
-    `Chrome CDP endpoint on port ${port} did not respond within ${timeoutMs}ms. ` +
-      `Make sure any already-running Chrome was fully quit (Cmd+Q) before launching — ` +
-      `Chrome silently ignores --remote-debugging-port if an instance is already running.`,
-  );
+  throw new Error(`Chrome CDP endpoint on port ${port} did not respond within ${timeoutMs}ms.`);
 }
 
 interface LaunchChromeOptions {
   timeoutMs?: number;
 }
 
-/** Launches the user's real Chrome.app against their real profile with CDP
- * enabled. Idempotent: if something is already responding on the CDP port,
- * reuses it instead of spawning a second process (which Chrome would refuse
- * anyway against the same profile). */
-export async function launchChrome(opts: LaunchChromeOptions = {}): Promise<{ cdpUrl: string; reused: boolean }> {
+/** Launches a real, visible Chrome.app against the given profile directory
+ * (see chrome-profile.ts) with CDP enabled. Idempotent: if something is
+ * already responding on the CDP port, reuses it instead of spawning a
+ * second process. */
+export async function launchChrome(
+  profileDir: string,
+  opts: LaunchChromeOptions = {},
+): Promise<{ cdpUrl: string; reused: boolean }> {
   const cdpUrl = `http://localhost:${CDP_PORT}`;
   const timeoutMs = opts.timeoutMs ?? 15_000;
 
@@ -67,11 +61,6 @@ export async function launchChrome(opts: LaunchChromeOptions = {}): Promise<{ cd
 
   if (!existsSync(CHROME_BINARY)) {
     throw new Error(`Google Chrome not found at ${CHROME_BINARY}`);
-  }
-
-  const profileDir = realChromeUserDataDir();
-  if (!existsSync(profileDir)) {
-    throw new Error(`Chrome profile directory not found at ${profileDir}. Is Chrome installed and has it been run once?`);
   }
 
   chromeProcess = spawn(

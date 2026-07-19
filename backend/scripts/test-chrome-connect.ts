@@ -1,10 +1,13 @@
 // Manual smoke test for the browser automation foundation.
 // Run with: npm run test:chrome-connect
 //
-// IMPORTANT: fully quit your real Chrome first (Cmd+Q) — Chrome only
-// accepts --remote-debugging-port on a fresh launch, so if Chrome is
-// already running against your normal profile this will fail to attach
-// with debugging enabled.
+// FIRST RUN ONLY: fully quit your real Chrome first (Cmd+Q). This
+// connects to a dedicated Chrome instance backed by a one-time COPY of
+// your real profile (see chrome-profile.ts) — copying a live SQLite
+// Cookies file while Chrome has it open risks grabbing an inconsistent
+// snapshot, so the safe window is while Chrome is closed. After that
+// first copy, your normal Chrome can be open or closed for future runs —
+// this connects to its own separate profile/process, not your real one.
 import { connectToRealChrome } from '../src/browser/context-manager.js';
 
 async function main() {

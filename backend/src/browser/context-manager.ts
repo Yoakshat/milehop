@@ -1,6 +1,7 @@
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { chromium } from 'playwright';
 import { launchChrome } from './chrome-launcher.js';
+import { ensureChromeProfile } from './chrome-profile.js';
 
 // Ported from ~/projects/voyage/main/src/main/browser/context-manager.ts,
 // simplified for standalone use: voyage tracked a separate tab tree per
@@ -58,16 +59,19 @@ function registerPage(reg: Registry, page: Page): TabId {
   return tabId;
 }
 
-/** Connects to the user's REAL Chrome (their actual profile/cookies), launching
- * it with remote debugging if it isn't already running with CDP enabled.
+/** Connects to a real, visible Chrome.app running against a one-time COPY
+ * of the user's real Chrome profile (see chrome-profile.ts) — carries over
+ * real cookies/logins without needing to attach CDP to the actual default
+ * profile directory, which Chrome 136+ blocks specifically to prevent this
+ * exact class of cookie exfiltration. Launches with remote debugging if
+ * it isn't already running with CDP enabled.
  *
  * Real Chrome over CDP only exposes a single default BrowserContext (unlike
  * headless Chromium, it doesn't support creating isolated contexts) — per
  * Playwright's connectOverCDP docs, that's `browser.contexts()[0]`.
  *
  * Returns the raw Browser/BrowserContext plus an `openTab` helper for
- * opening new tabs against that shared context. Nothing calls this yet —
- * it's wired up once Alaska's search/results selectors are known.
+ * opening new tabs against that shared context.
  */
 export async function connectToRealChrome(): Promise<{
   browser: Browser;
@@ -86,7 +90,8 @@ export async function connectToRealChrome(): Promise<{
   }
 
   connecting = (async () => {
-    const { cdpUrl } = await launchChrome();
+    const profileDir = ensureChromeProfile();
+    const { cdpUrl } = await launchChrome(profileDir);
     const b = await chromium.connectOverCDP(cdpUrl);
     b.on('disconnected', () => {
       browser = null;

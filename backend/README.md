@@ -135,24 +135,37 @@ against real markup.
 
 ## Browser automation foundation
 
-`src/browser/chrome-launcher.ts` + `src/browser/context-manager.ts` are
-ported from `~/projects/voyage/main/src/main/browser/` (Electron app that
-already solved CDP-driven Chrome automation), adapted for a plain Node
-server and — importantly — to connect to the **user's real Chrome profile**
-rather than a copied/dedicated debug profile, so search results reuse the
-user's actual Alaska Airlines login/cookies with no separate sign-in step.
+`src/browser/chrome-launcher.ts` + `context-manager.ts` + `chrome-profile.ts`
+are ported from `~/projects/voyage/main/src/main/browser/` (Electron app
+that already solved CDP-driven Chrome automation), adapted for a plain
+Node server.
 
-`connectToRealChrome()` (in `context-manager.ts`) launches/attaches to real
-`Google Chrome.app` with `--remote-debugging-port` against
-`~/Library/Application Support/Google/Chrome` (profile `Default`), connects
+**This does NOT CDP-attach to your actual default Chrome profile — it
+can't.** As of Chrome 136+, Google blocks `--remote-debugging-port` from
+attaching to the default profile directory specifically, to prevent
+malware from exfiltrating cookies/sessions via CDP (the exact door this
+app would otherwise be using). Instead, `chrome-profile.ts`'s
+`ensureChromeProfile()` makes a **one-time copy** of your real profile
+(`~/Library/Application Support/Google/Chrome/Default` + top-level `Local
+State`, excluding heavy dirs like `Cache`/`History`/`IndexedDB`) into
+`~/Library/Application Support/milehop/chrome-profile`, and Chrome is
+launched against that copy — carrying over real cookies/logins (including
+any Alaska Airlines session) without ever touching the live default
+profile. The copy happens once and is skipped on later runs; call
+`refreshChromeProfile()` to force a re-copy if a session cookie expires.
+
+**Before the FIRST run, fully quit Chrome (Cmd+Q, not just closing
+windows).** The copy step reads your real profile's SQLite `Cookies` file
+directly off disk — doing that while Chrome has it open risks copying an
+inconsistent snapshot. After that first copy, your normal Chrome can stay
+open for all future runs; this connects to its own separate profile and
+process.
+
+`connectToRealChrome()` (in `context-manager.ts`) calls
+`ensureChromeProfile()`, launches/attaches to real `Google Chrome.app`
+against that copied profile with `--remote-debugging-port`, connects
 Playwright over CDP, and returns `{ browser, context, openTab, listTabs,
 getTab, closeTab }`.
-
-**Before using it, fully quit Chrome (Cmd+Q, not just closing windows).**
-Chrome only honors `--remote-debugging-port` on a fresh launch — if an
-instance is already running against your normal profile, the flag is
-silently ignored and `connectToRealChrome()` will time out waiting for the
-CDP port.
 
 Manual smoke test (just the connection, not the scraper):
 
@@ -162,5 +175,6 @@ npm run test:chrome-connect
 
 opens a new tab and navigates to google.com. This has not been verified
 end-to-end in a sandboxed CI-style environment (no real display/Chrome
-available there) — needs to be run on a real macOS desktop session with
-Chrome installed and fully quit first.
+available there) — needs to be run on a real macOS desktop session, with
+Chrome fully quit before the first run so the profile copy can happen
+cleanly.

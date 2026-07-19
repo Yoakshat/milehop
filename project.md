@@ -32,25 +32,59 @@ manually by the user if Alaska prompts for it at that step).
   login-required booking step (`ask-user.ts`).
 
 ## Architecture
-1. **Selector discovery** (one-time, semi-manual): explore Alaska's real
-   site via browser tools to record the DOM selectors/flow needed for
-   search results, per-flight fare options, and add-to-cart — saved as a
-   config/script, not re-derived by an LLM at runtime.
-2. **Runtime flow**:
-   - `POST /search` with `{from, to, dates, passengers, usePoints}`
-   - Backend connects to the user's real Chrome via CDP, navigates to
-     Alaska, fills the search form, submits.
-   - Scrapes top 5 outbound results (cash + points pricing).
-   - Opens each of the 5 in its own tab **in parallel**, scrapes top 3 fare
-     options per tab.
-   - Streams each card over SSE as soon as it's found; frontend cards
-     appear incrementally and re-sort by lowest total points live.
-   - `POST /book` for the winning card: resumes that flight's tab, selects
-     the chosen fare, clicks Add to Cart, stops (pauses for manual login if
-     Alaska requires it).
+1. **Selector discovery** (done, one-time — `docs/alaska-flow.md`): Alaska's
+   search is a URL-driven SPA — no form-filling needed. Direct navigation:
+   `alaskaair.com/search/results?O=..&D=..&OD=..&DD=..&A=..&RT=true&ShoppingMethod={onlineaward|revenue}`
+   (`onlineaward` = points+cash, `revenue` = cash-only). Clicking an outbound
+   fare button morphs the *same tab* into return-flight results; clicking a
+   return fare button morphs it into a Trip Summary page with an
+   `Add to cart` button. Because this mutates one tab rather than
+   navigating, exploring 5 outbound branches in parallel requires 5 separate
+   tabs, each independently clicking "its" outbound option.
+2. **Runtime flow** (contract implemented; mock-data-backed today, real
+   scraper not yet wired in — see Deferred):
+   - `GET /search/stream?from=&to=&departDate=&returnDate=&passengers=&usePoints=`
+     — single SSE connection (no separate POST), emits `event: flight` per
+     result (`FlightCard` JSON — see `frontend/README.md`/`backend/README.md`
+     for the exact shape) then `event: done`.
+   - Frontend cards appear incrementally and re-sort live, ascending by
+     `points + pointsCash * 100` — lowest first gets the "BEST DEAL" badge.
+   - `POST /book { cardId }` — stub today (~1s simulated delay, returns
+     `{status:"added_to_cart"}`); real version will resume that card's tab,
+     select the return fare if needed, click Add to Cart, and stop there.
 
 ## Key Files
-_To be filled in as we build._
+- `docs/alaska-flow.md` — discovered Alaska Airlines URL/click flow, the
+  spec the real scraper implementation should follow
+- `frontend/src/api/flightStream.ts` — mock vs. real SSE/book switch
+  (`?mock=0` toggles real backend); only file that changes as backend work
+  lands
+- `frontend/src/mock/mockStream.ts`, `backend/src/mock/mockFlights.ts` —
+  isolated mock data generators, each the one place to swap for the real
+  implementation on its side
+- `frontend/src/components/{SearchBar,FlightResultCard,Logo}.tsx`,
+  `frontend/src/App.tsx` — UI
+- `backend/src/routes/{search,book}.ts`, `backend/src/server.ts` — Express
+  SSE/book endpoints
+- `backend/src/browser/{chrome-launcher,context-manager}.ts` — ported from
+  `~/projects/voyage/main`, ready but not yet wired into any route; ties into
+  the user's **real** Chrome profile (not a separate debug profile) via CDP
 
 ## How to Run
-_To be filled in as we build._
+```
+cd backend && npm install && npm run dev     # http://localhost:4000
+cd frontend && npm install && npm run dev    # http://localhost:3000 (mock mode)
+```
+Append `?mock=0` to the frontend URL to hit the real backend instead of the
+built-in mock stream (both currently mock-data-backed, but going through
+the real SSE/HTTP contract end-to-end rather than the frontend's own fake
+timer).
+
+## Deferred (explicitly, not forgotten)
+- Real Alaska scraper (Playwright script per `docs/alaska-flow.md`) wired
+  into `backend/src/mock/mockFlights.ts`'s call site, replacing mock data
+- `connectToRealChrome()` verified end-to-end only by process-launch
+  inspection so far (sandboxed dev environment had no real display/CDP
+  response) — needs a real desktop run with Chrome fully quit first
+- Real login-gated checkout past "Add to cart" (explicitly out of scope for
+  this demo)

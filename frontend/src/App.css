@@ -1,0 +1,396 @@
+.app {
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.sky {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 60% 40% at 20% 0%, rgba(122, 162, 255, 0.16), transparent 60%),
+    radial-gradient(ellipse 50% 35% at 85% 10%, rgba(167, 139, 250, 0.14), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 50% 100%, rgba(56, 189, 248, 0.08), transparent 60%),
+    #0a0b10;
+}
+
+.sky::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+.header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding: 28px 40px 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-name {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.main {
+  position: relative;
+  z-index: 1;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 56px 24px 100px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+/* Search bar */
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  border-radius: 999px;
+  padding: 8px 8px 8px 24px;
+  gap: 4px;
+  box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.6);
+}
+
+.search-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 14px;
+  min-width: 0;
+}
+
+.search-field label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  font-weight: 500;
+}
+
+.search-field input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #f2f3f7;
+  font-size: 14px;
+  font-weight: 600;
+  width: 100%;
+}
+
+.search-field-narrow {
+  width: 82px;
+}
+
+.search-field-narrow input {
+  width: 100%;
+}
+
+.search-field-dates {
+  flex: 1;
+  min-width: 180px;
+}
+
+.date-inputs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.date-inputs input {
+  color-scheme: dark;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.date-sep {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.search-divider {
+  width: 1px;
+  height: 30px;
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.points-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 12px;
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+
+.points-toggle.on {
+  color: #f2f3f7;
+}
+
+.points-toggle-track {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.points-toggle.on .points-toggle-track {
+  background: linear-gradient(90deg, #7dd3fc, #a78bfa);
+}
+
+.points-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+
+.points-toggle.on .points-toggle-thumb {
+  transform: translateX(14px);
+}
+
+.search-button {
+  background: linear-gradient(135deg, #7dd3fc, #a78bfa);
+  border: none;
+  color: #0a0b10;
+  font-weight: 700;
+  font-size: 14px;
+  padding: 14px 30px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  transition: filter 0.15s, transform 0.15s;
+}
+
+.search-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.search-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Results */
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.empty-state {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 60px 20px;
+  font-size: 14px;
+}
+
+.flight-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 20px;
+  padding: 22px 26px;
+}
+
+.flight-card-best {
+  border-color: rgba(167, 139, 250, 0.5);
+  background: linear-gradient(135deg, rgba(125, 211, 252, 0.08), rgba(167, 139, 250, 0.08));
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.15), 0 20px 50px -25px rgba(167, 139, 250, 0.4);
+}
+
+.best-badge {
+  position: absolute;
+  top: -11px;
+  left: 26px;
+  background: linear-gradient(135deg, #7dd3fc, #a78bfa);
+  color: #0a0b10;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+
+.flight-card-legs {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+}
+
+.leg-separator {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.leg-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: baseline;
+  gap: 18px;
+}
+
+.leg-times {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.leg-arrow {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 13px;
+}
+
+.leg-route {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.45);
+  font-weight: 500;
+}
+
+.leg-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.45);
+  white-space: nowrap;
+}
+
+.leg-dot {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.stops-direct {
+  color: #86efac;
+}
+
+.leg-flight-number {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.3);
+  white-space: nowrap;
+}
+
+.flight-card-price {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.price-points {
+  font-size: 19px;
+  font-weight: 800;
+  background: linear-gradient(135deg, #7dd3fc, #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.price-cash {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 600;
+}
+
+.price-cash-only {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.3);
+  margin-bottom: 10px;
+}
+
+.book-button {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f2f3f7;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 22px;
+  border-radius: 999px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.book-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.book-button.booked {
+  background: rgba(134, 239, 172, 0.15);
+  border-color: rgba(134, 239, 172, 0.35);
+  color: #86efac;
+}
+
+.book-button.error {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.35);
+  color: #f87171;
+}
+
+.book-button:disabled {
+  cursor: default;
+}
+
+@media (max-width: 720px) {
+  .search-bar {
+    flex-wrap: wrap;
+    border-radius: 24px;
+    padding: 16px;
+  }
+
+  .search-divider {
+    display: none;
+  }
+
+  .search-button {
+    width: 100%;
+  }
+
+  .flight-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .flight-card-price {
+    align-items: flex-start;
+  }
+
+  .leg-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

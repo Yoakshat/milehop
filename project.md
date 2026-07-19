@@ -4,13 +4,17 @@
 Standalone web app (localhost:3000) that finds the best Alaska Airlines
 cash+points flight deal. User enters From/To/dates/passengers/points-toggle
 once and hits search; flight cards stream in live as a real (visible,
-non-headless) Chrome browser — driven via CDP against the user's own Chrome
-profile/cookies, no fresh login needed for search — works through Alaska's
-site: top 5 outbound results, then top 3 fare options inside each. Cards
-auto-reorder by lowest total points as results stream in. Clicking "Book" on
-the winning card drives that flight's real tab through fare selection to
-Alaska's add-to-cart page and stops (no real purchase; login handled
-manually by the user if Alaska prompts for it at that step).
+non-headless) Chrome browser — driven via CDP against a one-time COPY of
+the user's real Chrome profile (search itself needs no login at all;
+Chrome 136+ blocks CDP from attaching to the actual default profile, so a
+copy is required, not optional — see backend/README.md) — works through
+Alaska's site: top 5 outbound results, then top 3 fare options inside each.
+Cards auto-reorder by lowest total points as results stream in. Clicking
+"Book" on the winning card drives that flight's real tab through fare
+selection to Alaska's add-to-cart page and stops (no real purchase; login
+handled manually by the user if Alaska prompts for it at that step).
+**The full real flow — search through a real Add to Cart — has been run
+and verified end-to-end against the live site** (2026-07-19).
 
 ## Tech Stack
 - Frontend: React + Vite, dark UI inspired by a flight-search screenshot
@@ -67,9 +71,11 @@ manually by the user if Alaska prompts for it at that step).
   `frontend/src/App.tsx` — UI
 - `backend/src/routes/{search,book}.ts`, `backend/src/server.ts` — Express
   SSE/book endpoints
-- `backend/src/browser/{chrome-launcher,context-manager}.ts` — ported from
-  `~/projects/voyage/main`, ready but not yet wired into any route; ties into
-  the user's **real** Chrome profile (not a separate debug profile) via CDP
+- `backend/src/browser/{chrome-launcher,context-manager,chrome-profile}.ts`
+  — ported from `~/projects/voyage/main`; `chrome-profile.ts` makes the
+  one-time copy of the user's real Chrome profile that CDP attaches to
+  (see backend/README.md for why a copy, not the live default, is
+  required)
 
 ## How to Run
 ```
@@ -83,14 +89,13 @@ timer).
 
 ## Deferred (explicitly, not forgotten)
 - Real Alaska scraper (`backend/src/browser/alaska-scraper.ts` +
-  `alaska-session.ts`, `MILEHOP_REAL_ALASKA=1`) is written and wired in —
-  fully deterministic (Playwright `getByRole`/regex, no LLM calls at
-  runtime) — but **not yet run against the live site**: this dev sandbox
-  has no real Chrome/display. Needs a real desktop run to confirm the
-  DOM-grouping/ancestor-walk card-extraction heuristic holds against real
-  markup; likely the first thing to need a small tweak.
-- `connectToRealChrome()` verified end-to-end only by process-launch
-  inspection so far (sandboxed dev environment had no real display/CDP
-  response) — needs a real desktop run with Chrome fully quit first
+  `alaska-session.ts`, `MILEHOP_REAL_ALASKA=1`) is **run and verified**
+  against the live site — real search results, real Add to Cart confirmed
+  via the resulting cart tab's fare-matrix params. Known gaps (see
+  `docs/alaska-flow.md`'s 2026-07-19 update): 5 simultaneous tabs
+  sometimes hit rate-limiting (2 of 5 failed in one run; the 250ms stagger
+  isn't always enough); connecting itineraries sometimes report
+  `flightNumber: "Unknown"` (no single flight code visible without
+  clicking "Details").
 - Real login-gated checkout past "Add to cart" (explicitly out of scope for
   this demo)

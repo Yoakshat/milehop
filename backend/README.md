@@ -104,34 +104,53 @@ resumed.
 
 `src/browser/alaska-scraper.ts` + `alaska-session.ts` implement the real
 search/book flow **deterministically — no LLM calls at runtime**, per
-`docs/alaska-flow.md`. Alaska's SPA doesn't expose stable CSS classes, but
-its fare buttons have a stable, parseable **accessible name** (e.g. `"Main
-45k points + $32 Round trip"`), which is what `page.getByRole('button',
-{ name })` and in-page regex parsing key off — the same structure verified
-live via accessibility-tree snapshots when the flow was discovered.
+`docs/alaska-flow.md`. **Verified end-to-end on a real run**: real search
+results streamed from all working tabs, and a real `Add to Cart` click
+confirmed via a new `alaskaair.com/search/cart?...` tab whose fare-matrix
+params matched the selected outbound+return combo exactly.
 
 - `buildSearchUrl()` — direct URL navigation, no form-filling (`O`/`D`/`OD`/
   `DD`/`A`/`RT`/`ShoppingMethod`).
-- `extractCards()` — runs once via `page.evaluate()`: finds every fare
-  button, groups siblings sharing a parent (one flight's fare tiers), walks
-  up each group's ancestors to the nearest one containing 2+ "h:mm am/pm"
-  times (the card boundary), then regex-parses flight number / duration /
-  times, and counts non-origin/non-destination 3-letter airport codes in
-  the card as stops.
+- Everything is **row-scoped**: `getCardRows()` returns one `Locator` per
+  result row (`tr.matrixRow` — not `getByRole('row')`, which matches
+  nothing here since these rows use `display: grid`, and per the HTML
+  accessibility mapping spec that strips a `<tr>`'s implicit ARIA `row`
+  role). Row count/order stays stable across expand/collapse, unlike a
+  page-wide button index — an earlier version tracked fare buttons by
+  global index and broke on a real run (Alaska's fare-tier reveal is an
+  accordion: expanding one row can un-render its own trigger button,
+  silently shifting every later index).
+- `extractCardInfo(row, ...)` reads flight number/duration/stops/times —
+  always visible, whether or not that row's fares are expanded.
+- `selectCheapestFareInRow(row)` expands the row's collapsed fare trigger
+  if present (some routes/searches render fares already-expanded; others
+  collapse them behind a `"Round trip from Xk points..."` summary that
+  needs a click first) and clicks the cheapest tier — this **commits** to
+  that row, so it's only used for the outbound leg and for the final
+  booked return leg.
+- `previewCheapestFareInRow(row)` reads a row's cheapest price **without
+  clicking anything** — needed for the top-3 return rows, since committing
+  to one before reading the other two would lose them. Falls back to
+  parsing the collapsed trigger's own preview price when unexpanded
+  (verified live to already equal the real cheapest tier's price).
 - `alaska-session.ts` opens 5 tabs (staggered 250ms), each claims one
-  outbound option by index, clicks its cheapest fare (morphs that same tab
-  into return results — Alaska doesn't navigate to a new URL for this),
-  and streams its top-3 return options as `FlightCard`s. Alaska recomputes
-  each return-stage fare button to already be the full round-trip total
-  once an outbound leg is locked in (verified live), so no outbound+return
-  math is needed. Tabs stay open so `/book` can resume the exact right one.
+  outbound row by index, commits to its cheapest fare (morphs that same
+  tab into return results — Alaska doesn't navigate to a new URL for
+  this), and streams previews of its top-3 return rows as `FlightCard`s.
+  Alaska recomputes each return row's fare to already be the full
+  round-trip total once an outbound leg is locked in (verified live), so
+  no outbound+return math is needed. Tabs stay open, nothing further
+  clicked, so `/book` can resume the exact right tab and commit to the
+  specific return row the user picked.
 
-**Not yet verified end-to-end against the live site** — written from the
-confirmed accessible-name structure, but this dev sandbox has no real
-Chrome/display to run it in. Do a real run and sanity-check the parsed
-card data before trusting it fully; the DOM-grouping/ancestor-walk
-heuristic in particular is the part most likely to need a small tweak
-against real markup.
+Known gaps from the real run, not yet fixed (see `docs/alaska-flow.md`'s
+2026-07-19 update for full detail):
+- 5 simultaneous tabs sometimes hit rate-limiting — one run saw 2 of 5
+  tabs fail with a `page.goto` timeout. The 250ms stagger isn't always
+  enough; a longer stagger or retry would be the next thing to try.
+- Connecting ("Multiple flights") itineraries sometimes have no visible
+  single flight-number code in the row text (only behind "Details") —
+  `flightNumber` falls back to `"Unknown"` for those, a real limitation.
 
 ## Browser automation foundation
 

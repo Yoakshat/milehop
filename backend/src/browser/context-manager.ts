@@ -134,7 +134,12 @@ function buildHandle(b: Browser, reg: Registry) {
     openTab: async (url?: string) => {
       const page = await reg.context.newPage(); // registered by the 'page' listener
       const tabId = findTabId(reg, page) ?? registerPage(reg, page);
-      if (url) await page.goto(url);
+      // 'domcontentloaded' rather than the default 'load': heavy SPAs like
+      // Alaska's results page may never cleanly fire 'load' (trackers,
+      // long-polling, etc.) within a reasonable timeout — callers that need
+      // to wait for specific content should do so explicitly afterward
+      // (e.g. alaska-scraper.ts's waitForFareResults).
+      if (url) await page.goto(url, { waitUntil: 'domcontentloaded' });
       return { tabId, page };
     },
     listTabs: () => {

@@ -1,35 +1,66 @@
-import type { Page } from 'playwright';
+import type { Locator, Page } from 'playwright';
 import type { FlightCard, FlightLeg, SearchParams } from '../types.js';
 
 // Deterministic Playwright automation for alaskaair.com — no LLM calls at
-// runtime. Everything here is derived from the accessible role/name
-// structure verified live against the real site (see
-// ~/projects/milehop/main/docs/alaska-flow.md): Alaska's SPA doesn't expose
-// stable CSS classes, but fare buttons have a stable, parseable accessible
-// name (e.g. "Main 45k points + $32 Round trip"), which is what
-// `page.getByRole('button', { name })` and the in-page regex parsing below
-// both key off. This has NOT yet been run against the live site end-to-end
-// (this dev sandbox has no real Chrome/display) — the parsing heuristics
-// should be sanity-checked against one real run before being trusted fully.
+// runtime. Row-scoped: every result is one native <tr> (table row) — far
+// more stable than tracking a global button index, which an earlier
+// version of this file did and broke on a real run (see below).
+//
+// Row selection uses `tr.matrixRow`, not `getByRole('row')` — verified
+// live that getByRole('row') matches ZERO elements here even though the
+// <tr>s are real and populated: their CSS sets `display: grid` (confirmed
+// via the class name itself, `matrixRow grid ...`), and per the HTML
+// accessibility mapping spec, a <tr> only keeps its implicit ARIA `row`
+// role when its CSS display stays table-row-shaped — overriding it to
+// `grid` strips that mapping, so the "obviously more robust, role-based"
+// approach doesn't apply here. `matrixRow` reads as an intentional,
+// descriptive class (paired with an unrelated `svelte-xxxxx` hash, not a
+// hash itself) and its count matched the real result count live, so it's
+// used directly as a pragmatic fallback.
+//
+// Alaska's results layout has (at least) two variants depending on
+// route/search, confirmed live on real runs:
+//  (a) fare tiers listed directly in the row, e.g. "Main 45k points + $32
+//      Round trip" — no extra step needed.
+//  (b) a collapsed summary trigger per row, e.g. "Round trip from 55k
+//      points pts + $32", which must be CLICKED to expand and reveal the
+//      real selectable tier buttons within that SAME row, e.g.
+//      "Refundable Main 55k points pts + $32  Round trip   last 3 seats".
+// An earlier version tried to batch-expand every row's trigger up front
+// using a page-wide button index. That broke: this turns out to be an
+// accordion — expanding one row can cause ITS OWN trigger button to stop
+// matching the "collapsed" locator, which silently shifts every
+// subsequent `.nth(i)` index in a page-wide list, so a batch loop ends up
+// skipping/double-toggling rows unpredictably. Scoping everything to one
+// row's Locator (row.getByRole(...)) sidesteps this: only expand the ONE
+// row being worked on, right when it's needed, and never touch a
+// page-wide button index at all.
 
-const FARE_BUTTON_NAME = /round trip/i;
+const TRIGGER_BUTTON_NAME = /^round trip from/i;
+// Matches real, selectable fare-tier buttons in either layout variant,
+// excluding the collapsed trigger (which also contains "round trip").
+const FARE_BUTTON_NAME = /^(?!round trip from).*round trip/i;
 const COOKIE_DISMISS_NAME = 'Dismiss';
 const ADD_TO_CART_NAME = 'Add to cart';
 
-interface ParsedFare {
-  tier: string; // Saver | Main | Premium | First
+const TIME_RE = /\b(\d{1,2}:\d{2}\s?[ap]m)\b/gi;
+const DURATION_RE = /(\d+)h\s*(\d+)m/;
+const FLIGHT_NUM_RE = /\b[A-Z]{2}\s?\d{2,5}\b/i;
+const AIRPORT_RE = /\b([A-Z]{3})\b/g;
+// Optional "Refundable " prefix and optional "pts" after "points" — both
+// seen live, varying by fare-comparison layout variant.
+const POINTS_FARE_RE =
+  /^(?:Refundable\s+)?(Saver|Main|Premium|First|Business)\s+([\d.]+)k\s+points(?:\s+pts)?\s*\+\s*\$(\d+(?:\.\d+)?)/i;
+const CASH_FARE_RE = /^(?:Refundable\s+)?(Saver|Main|Premium|First|Business)\s+\$([\d,]+(?:\.\d+)?)/i;
+
+export interface ParsedFare {
+  tier: string; // Saver | Main | Premium | First | Business
   points: number; // 0 in cash mode
   pointsCash: number; // co-pay in points mode, full price in cash mode
   cashOnly: number; // all-cash total, present in both modes when parseable
 }
 
-interface ParsedCard {
-  /** Index into the page-wide, in-DOM-order list of fare buttons matching
-   * FARE_BUTTON_NAME — used to re-locate this card's first (cheapest) fare
-   * button for clicking, without needing a stable CSS selector. */
-  fareButtonStartIndex: number;
-  fareCount: number;
-  fares: ParsedFare[];
+export interface CardInfo {
   flightNumber: string;
   durationMinutes: number;
   stops: number;
@@ -58,141 +89,135 @@ export async function dismissCookieBanner(page: Page): Promise<void> {
 }
 
 export async function waitForFareResults(page: Page): Promise<void> {
-  await page.getByRole('button', { name: FARE_BUTTON_NAME }).first().waitFor({ timeout: 20_000 });
+  // Either variant's buttons contain "round trip" somewhere.
+  await page.getByRole('button', { name: /round trip/i }).first().waitFor({ timeout: 20_000 });
 }
 
-/**
- * Extracts every result "card" on the current results page (works for both
- * the outbound and the return step — Alaska reuses the same layout for
- * both). Runs entirely in-page via a single evaluate call: for each fare
- * button, walks up its ancestor chain until it finds one whose text content
- * contains at least two "h:mm am/pm" times (that's the card boundary), then
- * regex-parses the card's full text for flight number / duration / stops /
- * times, and regex-parses each fare button's own text for tier/points/cash.
- *
- * Deliberately avoids CSS class selectors — Alaska's build doesn't expose
- * stable ones. Airport-code-based stop counting (below) works around not
- * having a reliable "which text node is which" mapping: any 3-letter
- * uppercase code in the card's text that ISN'T the search's origin/
- * destination is a connection airport, i.e. one stop.
- */
-export async function extractCards(
-  page: Page,
-  originCode: string,
-  destCode: string,
-): Promise<ParsedCard[]> {
-  return page.evaluate(
-    ({ originCode, destCode }) => {
-      const FARE_RE = /round trip/i;
-      const TIME_RE = /\b(\d{1,2}:\d{2}\s?[ap]m)\b/gi;
-      const DURATION_RE = /(\d+)h\s*(\d+)m/;
-      const FLIGHT_NUM_RE = /\bAS\s?\d{2,5}\b/i;
-      const AIRPORT_RE = /\b([A-Z]{3})\b/g;
-      const POINTS_FARE_RE = /^(Saver|Main|Premium|First)\s+([\d.]+)k\s+points\s*\+\s*\$(\d+(?:\.\d+)?)/i;
-      const CASH_FARE_RE = /^(Saver|Main|Premium|First)\s+\$([\d,]+(?:\.\d+)?)/i;
-
-      const allFareButtons = Array.from(document.querySelectorAll('button')).filter((b) =>
-        FARE_RE.test(b.textContent || ''),
-      );
-
-      // Group buttons that share an immediate parent (Alaska renders each
-      // card's fare tier buttons as siblings under one wrapper).
-      const orderedParents: Element[] = [];
-      const groupsByParent = new Map<Element, HTMLButtonElement[]>();
-      for (const btn of allFareButtons) {
-        const parent = btn.parentElement;
-        if (!parent) continue;
-        if (!groupsByParent.has(parent)) {
-          groupsByParent.set(parent, []);
-          orderedParents.push(parent);
-        }
-        groupsByParent.get(parent)!.push(btn as HTMLButtonElement);
-      }
-
-      const cards: unknown[] = [];
-      let runningFareIndex = 0;
-
-      for (const parent of orderedParents) {
-        const buttons = groupsByParent.get(parent)!;
-        const startIndex = runningFareIndex;
-        runningFareIndex += buttons.length;
-
-        // Walk up to find the card boundary: nearest ancestor whose text
-        // contains at least 2 times.
-        let node: Element | null = parent;
-        let cardEl: Element | null = null;
-        for (let i = 0; i < 8 && node; i++) {
-          node = node.parentElement;
-          if (!node) break;
-          const times = (node.textContent || '').match(TIME_RE) || [];
-          if (times.length >= 2) {
-            cardEl = node;
-            break;
-          }
-        }
-        if (!cardEl) continue;
-
-        const cardText = cardEl.textContent || '';
-        const times = [...cardText.matchAll(TIME_RE)].map((m) => m[1]);
-        if (times.length < 2) continue;
-
-        const durationMatch = cardText.match(DURATION_RE);
-        const durationMinutes = durationMatch
-          ? Number(durationMatch[1]) * 60 + Number(durationMatch[2])
-          : 0;
-
-        const flightNumMatch = cardText.match(FLIGHT_NUM_RE);
-        const flightNumber = flightNumMatch ? flightNumMatch[0].toUpperCase() : 'Unknown';
-
-        const codes = [...cardText.matchAll(AIRPORT_RE)].map((m) => m[1]);
-        const stops = codes.filter((c) => c !== originCode && c !== destCode).length;
-
-        const fares: unknown[] = [];
-        for (const btn of buttons) {
-          const btnText = (btn.textContent || '').trim();
-          const pointsMatch = btnText.match(POINTS_FARE_RE);
-          const cashMatch = btnText.match(CASH_FARE_RE);
-          if (pointsMatch) {
-            fares.push({
-              tier: pointsMatch[1],
-              points: Math.round(Number(pointsMatch[2]) * 1000),
-              pointsCash: Number(pointsMatch[3]),
-              cashOnly: 0,
-            });
-          } else if (cashMatch) {
-            fares.push({
-              tier: cashMatch[1],
-              points: 0,
-              pointsCash: 0,
-              cashOnly: Number(cashMatch[2].replace(/,/g, '')),
-            });
-          }
-        }
-        if (fares.length === 0) continue;
-
-        cards.push({
-          fareButtonStartIndex: startIndex,
-          fareCount: buttons.length,
-          fares,
-          flightNumber,
-          durationMinutes,
-          stops,
-          departTime: times[0],
-          arriveTime: times[times.length - 1],
-        });
-      }
-
-      return cards;
-    },
-    { originCode, destCode },
-  ) as Promise<ParsedCard[]>;
+/** Every result row that represents a flight — filtered to ones containing
+ * "round trip" so any non-flight `tr.matrixRow` (if any) is excluded. Row
+ * count and order stay stable across expand/collapse (only a row's
+ * CONTENT changes), unlike a page-wide button index. See module comment
+ * for why this uses a class selector instead of the (here, non-functional)
+ * ARIA row role. */
+export function getCardRows(page: Page): Locator {
+  return page.locator('tr.matrixRow').filter({ hasText: /round trip/i });
 }
 
-/** Clicks the Nth fare button in page-wide fare-button order (as produced
- * by extractCards' fareButtonStartIndex) — this is what advances the SPA
- * from outbound results -> return results -> trip summary. */
-export async function clickFareButtonAt(page: Page, globalIndex: number): Promise<void> {
-  await page.getByRole('button', { name: FARE_BUTTON_NAME }).nth(globalIndex).click();
+function parseFareText(text: string): ParsedFare | null {
+  const normalized = text.trim().replace(/\s+/g, ' ');
+  const pointsMatch = normalized.match(POINTS_FARE_RE);
+  if (pointsMatch) {
+    return {
+      tier: pointsMatch[1],
+      points: Math.round(Number(pointsMatch[2]) * 1000),
+      pointsCash: Number(pointsMatch[3]),
+      cashOnly: 0,
+    };
+  }
+  const cashMatch = normalized.match(CASH_FARE_RE);
+  if (cashMatch) {
+    return {
+      tier: cashMatch[1],
+      points: 0,
+      pointsCash: 0,
+      cashOnly: Number(cashMatch[2].replace(/,/g, '')),
+    };
+  }
+  return null;
+}
+
+/** Reads a row's flight info (flight number / duration / stops / times).
+ * Available whether or not the row's fares are expanded — this text is
+ * always rendered, only the fare tier buttons are ever collapsed. */
+export async function extractCardInfo(row: Locator, originCode: string, destCode: string): Promise<CardInfo | null> {
+  const raw = (await row.textContent()) ?? '';
+  const text = raw.trim().replace(/\s+/g, ' ');
+
+  const times = [...text.matchAll(TIME_RE)].map((m) => m[1]);
+  if (times.length < 2) return null;
+
+  const durationMatch = text.match(DURATION_RE);
+  const durationMinutes = durationMatch ? Number(durationMatch[1]) * 60 + Number(durationMatch[2]) : 0;
+
+  const flightNumMatch = text.match(FLIGHT_NUM_RE);
+  const flightNumber = flightNumMatch ? flightNumMatch[0].toUpperCase() : 'Unknown';
+
+  const codes = [...text.matchAll(AIRPORT_RE)].map((m) => m[1]);
+  const stops = codes.filter((c) => c !== originCode && c !== destCode).length;
+
+  return {
+    flightNumber,
+    durationMinutes,
+    stops,
+    departTime: times[0],
+    arriveTime: times[times.length - 1],
+  };
+}
+
+/** Selects the cheapest fare tier within a single row: expands its
+ * collapsed trigger if present (variant (b); no-op if the row's fares are
+ * already directly visible — variant (a)), reads the cheapest tier's
+ * price, clicks it (advancing the SPA to the next step — return results
+ * or trip summary), and returns what was selected. */
+export async function selectCheapestFareInRow(row: Locator): Promise<ParsedFare | null> {
+  const trigger = row.getByRole('button', { name: TRIGGER_BUTTON_NAME });
+  if ((await trigger.count()) > 0) {
+    await trigger.first().click();
+    await row.getByRole('button', { name: FARE_BUTTON_NAME }).first().waitFor({ timeout: 5000 });
+  }
+
+  const fareButtons = row.getByRole('button', { name: FARE_BUTTON_NAME });
+  const count = await fareButtons.count();
+  if (count === 0) return null;
+
+  // Cheapest is listed first (Saver < Main < Premium < First/Business, or
+  // Main < First in points mode) — matches the discovered ordering.
+  const first = fareButtons.first();
+  const text = (await first.textContent()) ?? '';
+  const fare = parseFareText(text);
+  await first.click();
+  return fare;
+}
+
+const TRIGGER_PRICE_POINTS_RE = /round trip from\s+([\d.]+)k\s+points(?:\s+pts)?\s*\+\s*\$(\d+(?:\.\d+)?)/i;
+const TRIGGER_PRICE_CASH_RE = /round trip from\s+\$([\d,]+(?:\.\d+)?)/i;
+
+/** Read-only cheapest-fare lookup — does NOT click anything. Needed when
+ * browsing several rows' prices without committing to one (e.g. the top 3
+ * return options): clicking a collapsed trigger to reveal its real tier
+ * name would advance/consume that fare selection before the other two
+ * rows have been read. Falls back to parsing the collapsed trigger's own
+ * preview price ("Round trip from 55k points pts + $32") when the row
+ * hasn't been expanded — verified live to already equal the cheapest
+ * tier's real price, just without a tier name attached (reported as
+ * "Cheapest" instead of e.g. "Main"). */
+export async function previewCheapestFareInRow(row: Locator): Promise<ParsedFare | null> {
+  const fareButtons = row.getByRole('button', { name: FARE_BUTTON_NAME });
+  if ((await fareButtons.count()) > 0) {
+    const text = (await fareButtons.first().textContent()) ?? '';
+    const fare = parseFareText(text);
+    if (fare) return fare;
+  }
+
+  const trigger = row.getByRole('button', { name: TRIGGER_BUTTON_NAME });
+  if ((await trigger.count()) > 0) {
+    const text = ((await trigger.first().textContent()) ?? '').trim().replace(/\s+/g, ' ');
+    const pointsMatch = text.match(TRIGGER_PRICE_POINTS_RE);
+    if (pointsMatch) {
+      return {
+        tier: 'Cheapest',
+        points: Math.round(Number(pointsMatch[1]) * 1000),
+        pointsCash: Number(pointsMatch[2]),
+        cashOnly: 0,
+      };
+    }
+    const cashMatch = text.match(TRIGGER_PRICE_CASH_RE);
+    if (cashMatch) {
+      return { tier: 'Cheapest', points: 0, pointsCash: 0, cashOnly: Number(cashMatch[1].replace(/,/g, '')) };
+    }
+  }
+
+  return null;
 }
 
 export async function clickAddToCart(page: Page): Promise<void> {
@@ -210,36 +235,35 @@ export function toIso(dateStr: string, timeStr: string): string {
   return d.toISOString();
 }
 
-export function parsedCardToLeg(
-  card: ParsedCard,
-  params: SearchParams,
-  fromCode: string,
-  toCode: string,
-  dateStr: string,
-): FlightLeg {
+function addMinutes(iso: string, mins: number): string {
+  return new Date(new Date(iso).getTime() + mins * 60_000).toISOString();
+}
+
+export function cardInfoToLeg(info: CardInfo, fromCode: string, toCode: string, dateStr: string): FlightLeg {
+  const departTime = toIso(dateStr, info.departTime);
   return {
     airline: 'Alaska Airlines',
-    flightNumber: card.flightNumber,
+    flightNumber: info.flightNumber,
     fromCode,
     toCode,
-    departTime: toIso(dateStr, card.departTime),
-    arriveTime: toIso(dateStr, card.arriveTime),
-    durationMinutes: card.durationMinutes,
-    stops: card.stops,
+    departTime,
+    // Derived from durationMinutes rather than re-parsing info.arriveTime's
+    // clock time against the same calendar date — an overnight arrival
+    // (next-day landing) has an arrival clock time numerically "earlier"
+    // than departure, which would otherwise produce an arrival before its
+    // own departure. Duration is unambiguous regardless of day rollover.
+    arriveTime: addMinutes(departTime, info.durationMinutes),
+    durationMinutes: info.durationMinutes,
+    stops: info.stops,
   };
 }
 
-/** Cheapest fare on a card is always listed first (Saver < Main < Premium <
- * First, or Main < First in points mode) — matches the discovered ordering. */
-export function cheapestFare(card: ParsedCard): ParsedFare {
-  return card.fares[0];
-}
-
-export function fareToPricing(fare: ParsedFare, params: SearchParams): Pick<FlightCard, 'cashPrice' | 'points' | 'pointsCash'> {
+export function fareToPricing(
+  fare: ParsedFare,
+  params: SearchParams,
+): Pick<FlightCard, 'cashPrice' | 'points' | 'pointsCash'> {
   if (params.usePoints) {
     return { cashPrice: 0, points: fare.points, pointsCash: fare.pointsCash };
   }
   return { cashPrice: fare.cashOnly, points: 0, pointsCash: 0 };
 }
-
-export type { ParsedCard, ParsedFare };

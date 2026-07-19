@@ -75,10 +75,10 @@ es.addEventListener('flight', (e) => addCard(JSON.parse(e.data)));
 es.addEventListener('done', () => es.close());
 ```
 
-Currently backed entirely by mock data (`src/mock/mockFlights.ts`) so the
-API can be exercised standalone. That module is the only thing that needs
-to be swapped for a real Playwright/Alaska-scraper implementation later —
-routes/server code doesn't change.
+By default backed by mock data (`src/mock/mockFlights.ts`) so the API can
+be exercised standalone. Set `MILEHOP_REAL_ALASKA=1` to drive the real
+site instead (`src/browser/alaska-session.ts` + `alaska-scraper.ts`) — see
+"Real Alaska scraper" below.
 
 ### `POST /book`
 
@@ -95,11 +95,45 @@ Response (after a simulated ~0.6-1s delay):
 { "status": "added_to_cart" }
 ```
 
-Stub for now. The real implementation will resume that card's live browser
-tab (opened during search) and drive it through fare selection to Alaska's
-add-to-cart page — wired in later once Alaska's selectors are known.
+Mock-mode stub by default. With `MILEHOP_REAL_ALASKA=1`, resumes that
+card's live browser tab, selects its return fare, and clicks Add to Cart —
+returns `409 { status: "failed", reason }` if the tab/card can't be
+resumed.
 
-## Browser automation foundation (not yet wired in)
+## Real Alaska scraper (`MILEHOP_REAL_ALASKA=1`)
+
+`src/browser/alaska-scraper.ts` + `alaska-session.ts` implement the real
+search/book flow **deterministically — no LLM calls at runtime**, per
+`docs/alaska-flow.md`. Alaska's SPA doesn't expose stable CSS classes, but
+its fare buttons have a stable, parseable **accessible name** (e.g. `"Main
+45k points + $32 Round trip"`), which is what `page.getByRole('button',
+{ name })` and in-page regex parsing key off — the same structure verified
+live via accessibility-tree snapshots when the flow was discovered.
+
+- `buildSearchUrl()` — direct URL navigation, no form-filling (`O`/`D`/`OD`/
+  `DD`/`A`/`RT`/`ShoppingMethod`).
+- `extractCards()` — runs once via `page.evaluate()`: finds every fare
+  button, groups siblings sharing a parent (one flight's fare tiers), walks
+  up each group's ancestors to the nearest one containing 2+ "h:mm am/pm"
+  times (the card boundary), then regex-parses flight number / duration /
+  times, and counts non-origin/non-destination 3-letter airport codes in
+  the card as stops.
+- `alaska-session.ts` opens 5 tabs (staggered 250ms), each claims one
+  outbound option by index, clicks its cheapest fare (morphs that same tab
+  into return results — Alaska doesn't navigate to a new URL for this),
+  and streams its top-3 return options as `FlightCard`s. Alaska recomputes
+  each return-stage fare button to already be the full round-trip total
+  once an outbound leg is locked in (verified live), so no outbound+return
+  math is needed. Tabs stay open so `/book` can resume the exact right one.
+
+**Not yet verified end-to-end against the live site** — written from the
+confirmed accessible-name structure, but this dev sandbox has no real
+Chrome/display to run it in. Do a real run and sanity-check the parsed
+card data before trusting it fully; the DOM-grouping/ancestor-walk
+heuristic in particular is the part most likely to need a small tweak
+against real markup.
+
+## Browser automation foundation
 
 `src/browser/chrome-launcher.ts` + `src/browser/context-manager.ts` are
 ported from `~/projects/voyage/main/src/main/browser/` (Electron app that
@@ -120,7 +154,7 @@ instance is already running against your normal profile, the flag is
 silently ignored and `connectToRealChrome()` will time out waiting for the
 CDP port.
 
-Nothing calls this yet. Manual smoke test:
+Manual smoke test (just the connection, not the scraper):
 
 ```
 npm run test:chrome-connect

@@ -41,8 +41,9 @@ manually by the user if Alaska prompts for it at that step).
    `Add to cart` button. Because this mutates one tab rather than
    navigating, exploring 5 outbound branches in parallel requires 5 separate
    tabs, each independently clicking "its" outbound option.
-2. **Runtime flow** (contract implemented; mock-data-backed today, real
-   scraper not yet wired in — see Deferred):
+2. **Runtime flow** (contract implemented; mock-data-backed by default,
+   real scraper implemented and wired in behind `MILEHOP_REAL_ALASKA=1` —
+   see Deferred for what's not yet verified):
    - `GET /search/stream?from=&to=&departDate=&returnDate=&passengers=&usePoints=`
      — single SSE connection (no separate POST), emits `event: flight` per
      result (`FlightCard` JSON — see `frontend/README.md`/`backend/README.md`
@@ -81,8 +82,13 @@ the real SSE/HTTP contract end-to-end rather than the frontend's own fake
 timer).
 
 ## Deferred (explicitly, not forgotten)
-- Real Alaska scraper (Playwright script per `docs/alaska-flow.md`) wired
-  into `backend/src/mock/mockFlights.ts`'s call site, replacing mock data
+- Real Alaska scraper (`backend/src/browser/alaska-scraper.ts` +
+  `alaska-session.ts`, `MILEHOP_REAL_ALASKA=1`) is written and wired in —
+  fully deterministic (Playwright `getByRole`/regex, no LLM calls at
+  runtime) — but **not yet run against the live site**: this dev sandbox
+  has no real Chrome/display. Needs a real desktop run to confirm the
+  DOM-grouping/ancestor-walk card-extraction heuristic holds against real
+  markup; likely the first thing to need a small tweak.
 - `connectToRealChrome()` verified end-to-end only by process-launch
   inspection so far (sandboxed dev environment had no real display/CDP
   response) — needs a real desktop run with Chrome fully quit first

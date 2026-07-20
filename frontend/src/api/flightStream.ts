@@ -9,7 +9,7 @@ export interface FlightStreamHandle {
 
 function isMockMode(): boolean {
   const params = new URLSearchParams(window.location.search)
-  return params.get('mock') !== '0'
+  return params.get('mock') === '1'
 }
 
 export function openFlightStream(

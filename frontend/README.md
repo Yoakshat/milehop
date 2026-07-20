@@ -11,10 +11,11 @@ npm install
 npm run dev
 ```
 
-By default the app runs in **mock mode**: it simulates 5 flight cards
-streaming in with staggered delays instead of hitting a real backend, so the
-UI is fully demoable standalone. To use the real backend instead, append
-`?mock=0` to the URL, e.g. `http://localhost:3000/?mock=0`.
+By default the app hits the **real backend** at `http://localhost:4000`
+(run it with `MILEHOP_REAL_ALASKA=1` for the live Alaska Airlines flow —
+see `backend/README.md`). Append `?mock=1` to the URL, e.g.
+`http://localhost:3000/?mock=1`, to fall back to simulated cards
+(staggered fake SSE stream, no backend needed) for standalone UI demoing.
 
 ## Backend contract (must match exactly)
 
@@ -99,9 +100,8 @@ toward.
 
 - `src/types.ts` — shared `FlightCard` / `FlightLeg` / `SearchQuery` types.
 - `src/api/flightStream.ts` — the only module that knows about mock vs. real
-  mode (`?mock=0` toggles it) and the SSE/fetch calls. Swap/delete
-  `openMockStream` here once the real backend is ready — nothing else in the
-  app needs to change.
+  mode (`?mock=1` opts into mock; real backend is the default) and the
+  SSE/fetch calls.
 - `src/mock/mockStream.ts` — mock data + staggered fake SSE stream. Safe to
   delete entirely once not needed; only `flightStream.ts` imports it.
 - `src/components/SearchBar.tsx` — pill search bar (From/To/Dates/Passengers/

@@ -94,6 +94,7 @@
 
 .search-field-narrow {
   width: 82px;
+  margin-right: 22px;
 }
 
 .search-field-narrow input {
@@ -102,7 +103,7 @@
 
 .search-field-dates {
   flex: 1;
-  min-width: 180px;
+  min-width: 280px;
 }
 
 .date-inputs {
@@ -115,6 +116,8 @@
   color-scheme: dark;
   font-size: 13px;
   font-weight: 600;
+  width: 122px;
+  flex-shrink: 0;
 }
 
 .date-sep {
